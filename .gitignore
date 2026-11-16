@@ -1,0 +1,30 @@
+# Segredos e variáveis de ambiente locais
+.env
+.env.*
+!.env.example
+
+# Ambientes virtuais e caches Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Projetos, uploads e materiais locais específicos
+projects/
+transcricoes_latex/
+book_builder/
+*.pdf
+assemble_book.py
+build_full_course.py
+build_mq2_complete.py
+run.sh
+transcrever_curso.sh
+
+# Artefatos auxiliares de compilação LaTeX
+*.aux
+*.log
+*.out
+*.toc
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.bak
