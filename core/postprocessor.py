@@ -108,6 +108,7 @@ def render_preamble(cfg: ProjectConfig) -> str:
         "__PROFESSOR__": escape_latex_text(cfg.professor),
         "__TRANSCRIBER__": escape_latex_text(cfg.transcriber),
         "__CONTACT_EMAIL__": cfg.contact_email.strip(),
+        "__DOC_VERSION__": escape_latex_text(cfg.doc_version or "v1.0"),
         "__AI_DISCLAIMER_BLOCK__": build_ai_disclaimer_block(cfg),
         "__GRAPHICS_PATH__": graphics_paths,
     }

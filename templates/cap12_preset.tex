@@ -41,6 +41,12 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning, arrows.meta, decorations.pathreplacing, decorations.pathmorphing, calc, patterns, shapes}
 
+% --- Pacotes Especializados para Diagramas Físicos e Quânticos ---
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage[compat=1.1.0]{tikz-feynman}
+\usepackage{quantikz}
+
 % --- Caminhos de Imagens ---
 \graphicspath{
     {images/}
@@ -85,7 +91,7 @@ __GRAPHICS_PATH__
 \fancyhead[R]{\textsf{\small \textbf{__COURSE_CODE__}}}
 \fancyfoot[C]{\textsf{\small \thepage}}
 \fancyfoot[R]{\textsf{\footnotesize __PROFESSOR__}}
-\fancyfoot[L]{\textsf{\footnotesize __SEMESTER__}}
+\fancyfoot[L]{\textsf{\footnotesize __SEMESTER__ \textbullet{} __DOC_VERSION__}}
 
 % Estilo para páginas iniciais de capítulo
 \fancypagestyle{plain}{
@@ -93,7 +99,7 @@ __GRAPHICS_PATH__
     \renewcommand{\headrulewidth}{0pt}
     \fancyfoot[C]{\textsf{\small \thepage}}
     \fancyfoot[R]{\textsf{\footnotesize __INSTITUTION__}}
-    \fancyfoot[L]{\textsf{\footnotesize __SEMESTER__}}
+    \fancyfoot[L]{\textsf{\footnotesize __SEMESTER__ \textbullet{} __DOC_VERSION__}}
 }
 
 % Marcas dinâmicas de cabeçalho
@@ -152,11 +158,12 @@ __GRAPHICS_PATH__
         \textbf{Transcrição Digital e Diagramação:} __TRANSCRIBER__\\
         \textbf{Contato para Dúvidas e Erratas:} \href{mailto:__CONTACT_EMAIL__}{\texttt{__CONTACT_EMAIL__}}\\
         \textbf{Instituição:} __INSTITUTION__\\
-        \textbf{Período:} __SEMESTER__
+        \textbf{Período:} __SEMESTER__\\
+        \textbf{Versão:} \texttt{__DOC_VERSION__}
     \end{minipage}
 
     \vfill
-    {\textsf{\small Gerado via PDF2LaTeX Studio}}\\
+    {\textsf{\small Gerado via PDF2LaTeX Studio (__DOC_VERSION__)}}\\
     {\textsf{\small \today}}
 \end{titlepage}
 

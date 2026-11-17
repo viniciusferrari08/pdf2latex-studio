@@ -91,8 +91,10 @@ class ProjectConfig:
     model: str = "gemini-3.5-flash"
     dpi: int = 200
     auto_number_equations: bool = True
+    doc_version: str = "v1.0"
     custom_preamble: str = ""
     chapters: List[Dict] = field(default_factory=list)
+    reference_books: List[Dict] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
     def project_dir(self) -> Path:
@@ -109,6 +111,8 @@ class ProjectConfig:
         (pdir / "raw_pdfs").mkdir(exist_ok=True)
         (pdir / "page_images").mkdir(exist_ok=True)
         (pdir / "page_tex").mkdir(exist_ok=True)
+        (pdir / "references").mkdir(exist_ok=True)
+        (pdir / "versions").mkdir(exist_ok=True)
         meta_path = pdir / "metadata.json"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(asdict(self), f, ensure_ascii=False, indent=2)

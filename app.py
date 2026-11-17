@@ -3,8 +3,8 @@
 """
 PDF2LaTeX Studio - Aplicação Web Local (Streamlit)
 Converte qualquer PDF (notas manuscritas, listas, livros ou artigos) para código LaTeX
-estruturado com numeração de equações por seção, referências no texto, diagramas TikZ
-e diagramação acadêmica padrão Capítulo 12.
+estruturado com numeração de equações por seção, referências no texto, diagramas TikZ,
+contexto bibliográfico, revisor de erros com IA e versionamento de livros.
 """
 
 import shutil
@@ -22,6 +22,13 @@ from core.config import (
     load_env_api_key,
     sanitize_slug,
 )
+from core.error_reviewer import (
+    append_prompt_rule,
+    load_learned_prompt_rules,
+    locate_error_source,
+    review_and_fix_error,
+    save_learned_prompt_rules,
+)
 from core.latex_compiler import (
     compile_single_page_preview,
     compile_tex_to_pdf,
@@ -29,8 +36,14 @@ from core.latex_compiler import (
 )
 from core.packager import create_source_zip
 from core.postprocessor import assemble_master_tex, get_default_template_text
+from core.reference_context import index_reference_pdf, retrieve_relevant_context
 from core.renderer import get_pdf_page_count, render_all_pages, render_page_to_png
 from core.transcriber import AVAILABLE_MODELS, transcribe_page_image
+from core.versioning import (
+    create_version_snapshot,
+    list_versions,
+    restore_version_snapshot,
+)
 
 # ---------------------------------------------------------------------------
 # Configuração da Página & Estilo Visual
@@ -80,6 +93,10 @@ def init_session_state() -> None:
         st.session_state["rev_page_num"] = 1
     if "preview_imgs" not in st.session_state:
         st.session_state["preview_imgs"] = []
+    if "last_compile_error" not in st.session_state:
+        st.session_state["last_compile_error"] = ""
+    if "ai_error_review" not in st.session_state:
+        st.session_state["ai_error_review"] = None
 
 
 def get_active_project() -> ProjectConfig | None:
@@ -112,7 +129,7 @@ def render_sidebar() -> ProjectConfig | None:
         st.markdown("### 📚 Projetos Salvos")
         projects = list_projects()
         if projects:
-            options = {f"{p.title} ({p.project_id})": p.project_id for p in projects}
+            options = {f"{p.title} ({p.doc_version}) [{p.project_id}]": p.project_id for p in projects}
             labels = list(options.keys())
             current_pid = st.session_state.get("active_project_id")
             default_idx = 0
@@ -127,6 +144,8 @@ def render_sidebar() -> ProjectConfig | None:
                 st.session_state["rev_chapter_idx"] = 0
                 st.session_state["rev_page_num"] = 1
                 st.session_state["preview_imgs"] = []
+                st.session_state["last_compile_error"] = ""
+                st.session_state["ai_error_review"] = None
                 st.rerun()
         else:
             st.info("Nenhum projeto criado ainda. Comece na aba **Novo Projeto**.")
@@ -141,6 +160,7 @@ def render_sidebar() -> ProjectConfig | None:
             col2.metric("Páginas", f"{done}/{total}")
             if total > 0:
                 st.progress(done / total)
+            st.caption(f"Versão ativa: `{cfg.doc_version}` | Livros de ref.: `{len(cfg.reference_books)}`")
 
         st.markdown("---")
         st.markdown("### 🔑 Chave da API Gemini")
@@ -156,6 +176,7 @@ def render_sidebar() -> ProjectConfig | None:
         st.markdown("### 🛠️ Ambiente Local")
         st.write(f"- `pdflatex`: {'✅ Disponível' if is_pdflatex_available() else '❌ Ausente'}")
         st.write(f"- `pdftoppm`: {'✅ Disponível' if shutil.which('pdftoppm') else '❌ Ausente'}")
+        st.write(f"- `pdftotext`: {'✅ Disponível' if shutil.which('pdftotext') else '❌ Ausente'}")
         st.write(f"- API Key: {'✅ Configurada' if st.session_state['api_key'] else '⚠️ Não informada'}")
 
     return get_active_project()
@@ -186,7 +207,7 @@ def tab_upload_and_project() -> None:
         dpi = st.slider("Resolução (DPI)", min_value=120, max_value=300, value=200, step=20)
 
     uploaded_files = st.file_uploader(
-        "Selecione o(s) arquivo(s) PDF",
+        "Selecione o(s) arquivo(s) PDF das notas / aulas",
         type=["pdf"],
         accept_multiple_files=(mode == "multi"),
     )
@@ -225,15 +246,13 @@ def tab_upload_and_project() -> None:
                 return
 
             pid = sanitize_slug(proj_name)
-            # Evita sobrescrever silenciosamente se já existir
             if (BASE_DIR / "projects" / pid / "metadata.json").exists():
                 pid = f"{pid}_{int(time.time()) % 10000}"
 
-            preset = "cap12_report" if mode == "multi" else "cap12_report"
             cfg = ProjectConfig(
                 project_id=pid,
                 mode=mode,
-                preset=preset,
+                preset="cap12_report",
                 title=proj_name.strip() or "Documento LaTeX",
                 model=model,
                 dpi=dpi,
@@ -269,7 +288,7 @@ def tab_upload_and_project() -> None:
                     "order": item["order"],
                     "total_pages": total_pages,
                 })
-                progress.progress((idx + 1) / len(chapter_defs), text=f"Renderizado: {up.name} ({total_pages} págs.)")
+                progress.progress((idx + 1) / len(chapter_defs), text=f"Renderizado: {safe_pdf_name} ({total_pages} págs.)")
 
             cfg.chapters = saved_chapters
             cfg.save()
@@ -281,14 +300,14 @@ def tab_upload_and_project() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Aba 2: Metadados, Design Visual & Preâmbulo Avançado
+# Aba 2: Metadados, Design Visual, Livro de Referência & System Prompt
 # ---------------------------------------------------------------------------
 def tab_design_and_metadata(cfg: ProjectConfig | None) -> None:
     if not cfg:
-        st.info("Crie ou selecione um projeto para configurar metadados e design.")
+        st.info("Crie ou selecione um projeto para configurar metadados, design e referências.")
         return
 
-    st.subheader("🎨 Identidade Visual, Capa e Preâmbulo LaTeX")
+    st.subheader("🎨 Identidade Visual, Capa, Versão e Preâmbulo LaTeX")
 
     with st.form("design_form"):
         c1, c2 = st.columns(2)
@@ -306,7 +325,11 @@ def tab_design_and_metadata(cfg: ProjectConfig | None) -> None:
             title = st.text_input("Título Principal", value=cfg.title)
             subtitle = st.text_input("Subtítulo", value=cfg.subtitle)
             course_code = st.text_input("Identificador no Cabeçalho Direito", value=cfg.course_code)
-            semester = st.text_input("Semestre / Período (Rodapé Esquerdo)", value=cfg.semester)
+            col_sem, col_ver = st.columns(2)
+            with col_sem:
+                semester = st.text_input("Semestre / Período", value=cfg.semester)
+            with col_ver:
+                doc_version = st.text_input("Versão do Livro", value=cfg.doc_version)
 
         with c2:
             institution = st.text_input("Instituição", value=cfg.institution)
@@ -332,7 +355,7 @@ def tab_design_and_metadata(cfg: ProjectConfig | None) -> None:
         with st.expander("🛠️ Editor Avançado de Preâmbulo LaTeX (Opcional)", expanded=bool(cfg.custom_preamble)):
             st.caption(
                 "Deixe em branco para usar o template selecionado automaticamente com os placeholders "
-                "(__PRIMARY_R__, __TITLE__, etc.), ou cole/edite o preâmbulo completo abaixo."
+                "(__PRIMARY_R__, __TITLE__, __DOC_VERSION__, etc.), ou cole/edite o preâmbulo completo abaixo."
             )
             default_preview = cfg.custom_preamble if cfg.custom_preamble else get_default_template_text(preset_choice)
             use_custom = st.checkbox("Ativar preâmbulo customizado editado abaixo", value=bool(cfg.custom_preamble))
@@ -345,6 +368,7 @@ def tab_design_and_metadata(cfg: ProjectConfig | None) -> None:
             cfg.subtitle = subtitle
             cfg.course_code = course_code
             cfg.semester = semester
+            cfg.doc_version = doc_version.strip() or "v1.0"
             cfg.institution = institution
             cfg.department = department
             cfg.program = program
@@ -358,6 +382,55 @@ def tab_design_and_metadata(cfg: ProjectConfig | None) -> None:
             cfg.custom_preamble = custom_text if use_custom else ""
             cfg.save()
             st.success("Configurações visuais salvas!")
+
+    st.markdown("---")
+    st.subheader("📚 Livro-Texto de Referência (Contexto Bibliográfico para IA)")
+    st.caption(
+        "Envie o PDF do livro da matéria (ex.: Griffiths, Sakurai, Jackson). O texto será indexado localmente "
+        "com `pdftotext` e os trechos relevantes serão injetados no prompt para melhorar notação, símbolos e caligrafia."
+    )
+    ref_files = st.file_uploader(
+        "Adicionar PDF(s) de referência bibliográfica",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key=f"ref_upload_{cfg.project_id}",
+    )
+    if ref_files and st.button("📑 Indexar Livro(s) de Referência", key="btn_index_refs"):
+        pdir = cfg.project_dir()
+        ref_dir = pdir / "references"
+        ref_dir.mkdir(exist_ok=True)
+        existing_names = {r["filename"] for r in cfg.reference_books}
+        with st.spinner("Extraindo e indexando texto com pdftotext..."):
+            for rf in ref_files:
+                safe_name = Path(rf.name).name
+                dest = (ref_dir / safe_name).resolve()
+                if not dest.is_relative_to(ref_dir.resolve()):
+                    continue
+                dest.write_bytes(rf.getvalue())
+                meta = index_reference_pdf(dest, ref_dir)
+                if safe_name in existing_names:
+                    cfg.reference_books = [r for r in cfg.reference_books if r["filename"] != safe_name]
+                cfg.reference_books.append(meta)
+            cfg.save()
+        st.success(f"{len(ref_files)} arquivo(s) de referência indexado(s) localmente!")
+
+    if cfg.reference_books:
+        st.dataframe(cfg.reference_books, width="stretch", hide_index=True)
+
+    st.markdown("---")
+    with st.expander("🧠 Regras Aprendidas do SYSTEM_PROMPT (Auto-Aperfeiçoamento)", expanded=False):
+        rules = load_learned_prompt_rules()
+        st.caption("Regras adicionadas automaticamente pelo Revisor de Erros com IA para evitar erros recorrentes.")
+        rules_text = st.text_area(
+            "Uma regra por linha",
+            value="\n".join(rules),
+            height=150,
+            key="learned_rules_editor",
+        )
+        if st.button("💾 Atualizar Regras do System Prompt"):
+            updated = [ln.strip() for ln in rules_text.splitlines() if ln.strip()]
+            save_learned_prompt_rules(updated)
+            st.success(f"{len(updated)} regra(s) ativa(s) salva(s)!")
 
 
 # ---------------------------------------------------------------------------
@@ -384,11 +457,15 @@ def tab_batch_processing(cfg: ProjectConfig | None) -> None:
             "Páginas Transcritas": f"{done} / {tp}",
             "Status": "✅ Concluído" if done == tp and tp > 0 else "⏳ Pendente",
         })
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(rows, width="stretch", hide_index=True)
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        model_run = st.selectbox("Modelo para esta execução", AVAILABLE_MODELS, index=AVAILABLE_MODELS.index(cfg.model) if cfg.model in AVAILABLE_MODELS else 0)
+        model_run = st.selectbox(
+            "Modelo para esta execução",
+            AVAILABLE_MODELS,
+            index=AVAILABLE_MODELS.index(cfg.model) if cfg.model in AVAILABLE_MODELS else 0,
+        )
     with c2:
         chapter_filter = st.selectbox(
             "Escopo",
@@ -398,7 +475,7 @@ def tab_batch_processing(cfg: ProjectConfig | None) -> None:
         force_rerun = st.checkbox("Forçar retranscrição do cache", value=False)
 
     extra_prompt = st.text_input(
-        "Instruções adicionais opcionais para a IA (ex: 'Idioma inglês, preserve matrizes em bmatrix')",
+        "Instruções adicionais opcionais para a IA (ex: 'Capítulo 4 de Eletrodinâmica do Griffiths')",
         value="",
     )
 
@@ -434,6 +511,12 @@ def tab_batch_processing(cfg: ProjectConfig | None) -> None:
             tex_dir.mkdir(parents=True, exist_ok=True)
             raw_pdf = pdir / "raw_pdfs" / ch["filename"]
 
+            # Contexto bibliográfico relevante ao capítulo
+            ref_ctx = retrieve_relevant_context(
+                pdir,
+                query_hint=f"{cfg.course_code} {ch['title']} {extra_prompt}",
+            )
+
             for pnum in range(1, tp + 1):
                 completed += 1
                 tex_file = tex_dir / f"page_{pnum:03d}.tex"
@@ -457,6 +540,7 @@ def tab_batch_processing(cfg: ProjectConfig | None) -> None:
                         chapter_slug=slug,
                         model=model_run,
                         extra_instruction=extra_prompt,
+                        reference_context=ref_ctx,
                     )
                     tex_file.write_text(latex_code, encoding="utf-8")
                     logs.append(f"✅ [{ch['title']}] Pág. {pnum}/{tp} transcrita com sucesso.")
@@ -470,11 +554,11 @@ def tab_batch_processing(cfg: ProjectConfig | None) -> None:
         master_path = assemble_master_tex(cfg)
         ok, pdf_path, comp_log = compile_tex_to_pdf(master_path, passes=2)
         if ok:
+            st.session_state["last_compile_error"] = ""
             status_box.success(f"🎉 Processamento concluído e PDF compilado: `{pdf_path.name}`!")
         else:
-            status_box.warning("⚠️ Transcrição salva, mas o `pdflatex` apontou erros de compilação. Verifique na aba Compilação ou Revisão.")
-            with st.expander("Detalhes do Log LaTeX"):
-                st.code(comp_log)
+            st.session_state["last_compile_error"] = comp_log
+            status_box.warning("⚠️ Transcrição salva, mas o `pdflatex` apontou erros de compilação. Use o Revisor com IA na aba **Compilação & Download**!")
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +594,7 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
     with c_prev:
         st.write("")
         st.write("")
-        if st.button("⬅️ Anterior", use_container_width=True) and st.session_state["rev_page_num"] > 1:
+        if st.button("⬅️ Anterior", width="stretch") and st.session_state["rev_page_num"] > 1:
             st.session_state["rev_page_num"] -= 1
             st.session_state["preview_imgs"] = []
             st.rerun()
@@ -529,7 +613,7 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
     with c_next:
         st.write("")
         st.write("")
-        if st.button("Próxima ➡️", use_container_width=True) and st.session_state["rev_page_num"] < total_pages:
+        if st.button("Próxima ➡️", width="stretch") and st.session_state["rev_page_num"] < total_pages:
             st.session_state["rev_page_num"] += 1
             st.session_state["preview_imgs"] = []
             st.rerun()
@@ -542,7 +626,7 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
     with col_left:
         st.markdown(f"**Imagem Original — Página {pnum}/{total_pages}**")
         if img_path.exists():
-            st.image(str(img_path), use_container_width=True)
+            st.image(str(img_path), width="stretch")
         else:
             st.warning("Imagem da página não encontrada.")
 
@@ -559,12 +643,12 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
 
         b1, b2 = st.columns(2)
         with b1:
-            if st.button("💾 Salvar Alterações", use_container_width=True, type="primary"):
+            if st.button("💾 Salvar Alterações", width="stretch", type="primary"):
                 tex_path.parent.mkdir(parents=True, exist_ok=True)
                 tex_path.write_text(edited_tex, encoding="utf-8")
                 st.success("Página salva em cache!")
         with b2:
-            if st.button("👁️ Compilar Prévia desta Página", use_container_width=True):
+            if st.button("👁️ Compilar Prévia desta Página", width="stretch"):
                 tex_path.parent.mkdir(parents=True, exist_ok=True)
                 tex_path.write_text(edited_tex, encoding="utf-8")
                 with st.spinner("Compilando prévia LaTeX + TikZ..."):
@@ -580,7 +664,7 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
         with st.expander("🤖 Regerar Esta Página com IA (Ex: Ajustar TikZ ou Equações)"):
             regen_hint = st.text_input(
                 "Instrução de melhoria",
-                placeholder="Ex: Reproduza o gráfico de potencial como figura TikZ com eixos azuis",
+                placeholder="Ex: Reproduza o gráfico de potencial em pgfplots com eixos azuis",
                 key=f"hint_{slug}_{pnum}",
             )
             if st.button("🔄 Regerar Agora", key=f"regen_btn_{slug}_{pnum}"):
@@ -590,6 +674,10 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
                 elif not img_path.exists():
                     st.error("Imagem original ausente.")
                 else:
+                    ref_ctx = retrieve_relevant_context(
+                        pdir,
+                        query_hint=f"{cfg.course_code} {ch['title']} {regen_hint} {edited_tex[:400]}",
+                    )
                     with st.spinner(f"Reprocessando página {pnum} com {cfg.model}..."):
                         new_code = transcribe_page_image(
                             api_key=api_key,
@@ -598,6 +686,7 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
                             chapter_slug=slug,
                             model=cfg.model,
                             extra_instruction=regen_hint,
+                            reference_context=ref_ctx,
                         )
                         tex_path.write_text(new_code, encoding="utf-8")
                         st.success("Página regerada com sucesso!")
@@ -608,44 +697,47 @@ def tab_side_by_side_review(cfg: ProjectConfig | None) -> None:
             st.markdown("**Resultado Renderizado (LaTeX + TikZ):**")
             for p_img in st.session_state["preview_imgs"]:
                 if Path(p_img).exists():
-                    st.image(p_img, use_container_width=True)
+                    st.image(p_img, width="stretch")
 
 
 # ---------------------------------------------------------------------------
-# Aba 5: Compilação Final, Visualizador de PDF e Exportação
+# Aba 5: Compilação Final, Revisor de Erros IA, Versionamento & Exportação
 # ---------------------------------------------------------------------------
 def tab_compile_and_export(cfg: ProjectConfig | None) -> None:
     if not cfg:
         st.info("Crie ou selecione um projeto primeiro.")
         return
 
-    st.subheader("🚀 Compilação Final e Exportação")
+    st.subheader("🚀 Compilação Final, Revisor de Erros IA & Versionamento")
     pdir = cfg.project_dir()
     master_tex = pdir / "master.tex"
     master_pdf = pdir / "master.pdf"
 
     c1, c2 = st.columns([1, 2])
     with c1:
-        if st.button("🔨 Montar master.tex e Compilar PDF (2 passagens)", type="primary", use_container_width=True):
+        if st.button("🔨 Montar master.tex e Compilar PDF (2 passagens)", type="primary", width="stretch"):
             with st.spinner("Montando preâmbulo, equações numeradas e compilando com pdflatex..."):
                 m_path = assemble_master_tex(cfg)
                 ok, pdf_out, log_out = compile_tex_to_pdf(m_path, passes=2)
                 if ok:
+                    st.session_state["last_compile_error"] = ""
+                    st.session_state["ai_error_review"] = None
                     st.success("PDF compilado com sucesso!")
                 else:
-                    st.error("Falha na compilação LaTeX:")
-                    st.code(log_out)
+                    st.session_state["last_compile_error"] = log_out
+                    st.session_state["ai_error_review"] = None
+                    st.error("Falha na compilação LaTeX — veja o Revisor com IA abaixo.")
 
     with c2:
         dl1, dl2 = st.columns(2)
         with dl1:
             if master_pdf.exists():
                 st.download_button(
-                    "📥 Baixar PDF Compilado",
+                    f"📥 Baixar PDF ({cfg.doc_version})",
                     data=master_pdf.read_bytes(),
-                    file_name=f"{cfg.project_id}.pdf",
+                    file_name=f"{cfg.project_id}_{cfg.doc_version}.pdf",
                     mime="application/pdf",
-                    use_container_width=True,
+                    width="stretch",
                 )
         with dl2:
             if master_tex.exists() or any((pdir / "page_tex").rglob("*.tex")):
@@ -657,12 +749,113 @@ def tab_compile_and_export(cfg: ProjectConfig | None) -> None:
                     data=zip_path.read_bytes(),
                     file_name=zip_path.name,
                     mime="application/zip",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
+    # --- Painel de Diagnóstico & Revisor de Erros com IA ---
+    err_log = st.session_state.get("last_compile_error", "")
+    if err_log:
+        st.markdown("---")
+        st.error("### 🩺 Erro de Compilação Detectado")
+        st.code(err_log)
+
+        loc = locate_error_source(master_tex, err_log, pdir)
+        if loc:
+            st.warning(
+                f"📍 Origem localizada: **`{loc.chapter_slug}` — Página {loc.page_num}** "
+                f"(linha `{loc.master_line}` em `master.tex`)."
+            )
+            if st.button("🤖 Revisar e Corrigir Erro com IA", type="primary"):
+                api_key = st.session_state.get("api_key", "").strip()
+                if not api_key:
+                    st.error("Informe a chave da API Gemini na barra lateral.")
+                else:
+                    with st.spinner("Analisando log, código da página e SYSTEM_PROMPT..."):
+                        try:
+                            review = review_and_fix_error(api_key, cfg.model, loc, err_log)
+                            review["page_tex_path"] = str(loc.page_tex_path)
+                            review["chapter_slug"] = loc.chapter_slug
+                            review["page_num"] = loc.page_num
+                            st.session_state["ai_error_review"] = review
+                        except Exception as exc:
+                            st.error(f"Falha ao consultar IA revisora: {exc}")
+
+        review = st.session_state.get("ai_error_review")
+        if review:
+            st.info(f"**Diagnóstico da IA:** {review['diagnosis']}")
+            edited_fix = st.text_area(
+                f"Código Corrigido para {Path(review['page_tex_path']).name}",
+                value=review["fixed_page_tex"],
+                height=260,
+                key="ai_fix_editor",
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("✅ Aplicar Correção e Recompilar", type="primary", width="stretch"):
+                    Path(review["page_tex_path"]).write_text(edited_fix, encoding="utf-8")
+                    m_path = assemble_master_tex(cfg)
+                    ok, _, new_log = compile_tex_to_pdf(m_path, passes=2)
+                    if ok:
+                        st.session_state["last_compile_error"] = ""
+                        st.session_state["ai_error_review"] = None
+                        st.success("Correção aplicada e PDF compilado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.session_state["last_compile_error"] = new_log
+                        st.session_state["ai_error_review"] = None
+                        st.warning("Página atualizada, mas há outro erro subsequente no documento.")
+                        st.rerun()
+            with col_b:
+                if review.get("should_update_prompt") and review.get("suggested_prompt_rule"):
+                    st.warning(f"🧠 **Sugestão para o SYSTEM_PROMPT:** {review['suggested_prompt_rule']}")
+                    if st.button("➕ Salvar Regra no System Prompt", width="stretch"):
+                        append_prompt_rule(review["suggested_prompt_rule"])
+                        st.success("Regra salva! Todas as próximas transcrições seguirão esta diretriz.")
+
+    # --- Painel de Versionamento do Livro ---
+    st.markdown("---")
+    with st.expander("🏷️ Versionamento do Livro (Snapshots & Histórico)", expanded=False):
+        vc1, vc2, vc3 = st.columns([1, 2, 1])
+        with vc1:
+            ver_tag = st.text_input("Tag da Versão", value=cfg.doc_version, key="ver_tag_input")
+        with vc2:
+            ver_notes = st.text_input("Notas da Versão (Changelog)", placeholder="Ex: Revisão Cap. 2 e novos diagramas TikZ", key="ver_notes_input")
+        with vc3:
+            st.write("")
+            st.write("")
+            if st.button("📌 Salvar Snapshot", width="stretch", type="primary"):
+                if not master_tex.exists():
+                    assemble_master_tex(cfg)
+                snap_dir = create_version_snapshot(cfg, ver_tag, ver_notes)
+                st.success(f"Snapshot `{snap_dir.name}` salvo!")
+                st.rerun()
+
+        versions = list_versions(cfg)
+        if versions:
+            for v in versions:
+                vcol1, vcol2, vcol3 = st.columns([3, 1, 1])
+                vcol1.markdown(f"**`{v['version_tag']}`** — {v['created_at']}  \n_{v.get('notes') or 'Sem notas'}_")
+                v_pdf = Path(v["dir"]) / "master.pdf"
+                if v_pdf.exists():
+                    vcol2.download_button(
+                        "📥 PDF",
+                        data=v_pdf.read_bytes(),
+                        file_name=f"{cfg.project_id}_{v['version_tag']}.pdf",
+                        mime="application/pdf",
+                        key=f"dl_ver_{v['version_tag']}",
+                        width="stretch",
+                    )
+                if vcol3.button("↩️ Restaurar", key=f"rest_ver_{v['version_tag']}", width="stretch"):
+                    restore_version_snapshot(cfg, v["version_tag"])
+                    st.success(f"Versão `{v['version_tag']}` restaurada!")
+                    st.rerun()
+        else:
+            st.caption("Nenhum snapshot salvo ainda.")
+
+    # --- Pré-visualização do PDF Final ---
     st.markdown("---")
     if master_pdf.exists():
-        st.markdown("### 📄 Pré-visualização do PDF Final")
+        st.markdown(f"### 📄 Pré-visualização do PDF Final (`{cfg.doc_version}`)")
         try:
             st.pdf(str(master_pdf), height=760)
         except Exception:
@@ -671,7 +864,7 @@ def tab_compile_and_export(cfg: ProjectConfig | None) -> None:
             prev_all.mkdir(exist_ok=True)
             render_all_pages(master_pdf, prev_all, dpi=120)
             for p_img in sorted(prev_all.glob("page_*.png"))[:10]:
-                st.image(str(p_img), use_container_width=True)
+                st.image(str(p_img), width="stretch")
     else:
         st.info("Clique no botão acima para gerar e visualizar o PDF consolidado.")
 
@@ -686,7 +879,7 @@ def main() -> None:
         """
         <div class="studio-banner">
             <h1>📘 PDF2LaTeX Studio</h1>
-            <p>Conversor Inteligente de Manuscritos e PDFs para LaTeX Acadêmico — Padrão Tipográfico Capítulo 12 (Libertine, Equações Numeradas & TikZ)</p>
+            <p>Conversor Inteligente de Manuscritos e PDFs para LaTeX Acadêmico — Equações Numeradas, TikZ/PGFPlots, Contexto Bibliográfico & Revisor IA</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -696,10 +889,10 @@ def main() -> None:
 
     tabs = st.tabs([
         "📂 Novo Projeto & Upload",
-        "🎨 Metadados & Design",
+        "🎨 Metadados, Design & Ref.",
         "⚡ Processamento em Lote",
         "🔍 Revisão Lado a Lado",
-        "🚀 Compilação & Download",
+        "🚀 Compilação & Versões",
     ])
 
     with tabs[0]:

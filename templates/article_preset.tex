@@ -41,6 +41,12 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning, arrows.meta, decorations.pathreplacing, decorations.pathmorphing, calc, patterns, shapes}
 
+% --- Pacotes Especializados para Diagramas Físicos e Quânticos ---
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage[compat=1.1.0]{tikz-feynman}
+\usepackage{quantikz}
+
 % --- Caminhos de Imagens ---
 \graphicspath{
     {images/}
@@ -84,7 +90,7 @@ __GRAPHICS_PATH__
 \fancyhead[R]{\textsf{\small \textbf{__COURSE_CODE__}}}
 \fancyfoot[C]{\textsf{\small \thepage}}
 \fancyfoot[R]{\textsf{\footnotesize __PROFESSOR__}}
-\fancyfoot[L]{\textsf{\footnotesize __SEMESTER__}}
+\fancyfoot[L]{\textsf{\footnotesize __SEMESTER__ \textbullet{} __DOC_VERSION__}}
 
 \renewcommand{\sectionmark}[1]{\markboth{\thesection\quad #1}{}}
 
@@ -116,7 +122,7 @@ __GRAPHICS_PATH__
 
 \noindent{\sffamily\bfseries\LARGE \textcolor{darkblue}{__TITLE__}}\\[0.25cm]
 {\sffamily\large \textbf{__SUBTITLE__}}\\[0.15cm]
-{\textsf{\small __INSTITUTION__ \textbullet{} __COURSE_CODE__ \textbullet{} __SEMESTER__}}\\
+{\textsf{\small __INSTITUTION__ \textbullet{} __COURSE_CODE__ \textbullet{} __SEMESTER__ \textbullet{} \texttt{__DOC_VERSION__}}}\\
 {\textsf{\small \textbf{Docente:} __PROFESSOR__ \quad|\quad \textbf{Transcrição:} __TRANSCRIBER__ (\href{mailto:__CONTACT_EMAIL__}{\texttt{__CONTACT_EMAIL__}})}}\\
 \vspace{0.3em}
 {\color{destaqueblue}\hrule height 0.8pt}
