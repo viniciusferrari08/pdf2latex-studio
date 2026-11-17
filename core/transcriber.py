@@ -10,12 +10,13 @@ from typing import List, Optional
 from PIL import Image
 
 from google import genai
+from google.genai import types
 
 LEARNED_RULES_FILE = Path(__file__).resolve().parent / "learned_prompt_rules.json"
 
 AVAILABLE_MODELS = [
     "gemini-3.5-flash",
-    "gemini-2.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-3.8-flash",
 ]
@@ -105,8 +106,9 @@ def transcribe_page_image(
     max_retries: int = 4,
 ) -> str:
     """Envia a imagem da página para o Gemini e retorna o código LaTeX estruturado."""
-    client = genai.Client(api_key=api_key)
-    img = Image.open(image_path)
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=120000))
+    with Image.open(image_path) as raw_img:
+        img = raw_img.copy()
 
     effective_prompt = get_effective_system_prompt()
     models_to_try = [model] + [m for m in AVAILABLE_MODELS if m != model]
@@ -125,7 +127,8 @@ def transcribe_page_image(
         user_prompt += f"\n\nInstrução adicional do usuário: {extra_instruction.strip()}"
 
     last_exception: Optional[Exception] = None
-    for m in models_to_try:
+    for idx, m in enumerate(models_to_try):
+        has_fallback = idx < len(models_to_try) - 1
         for attempt in range(max_retries):
             try:
                 response = client.models.generate_content(
@@ -133,16 +136,27 @@ def transcribe_page_image(
                     contents=[effective_prompt, user_prompt, img],
                 )
                 if response and response.text:
-                    time.sleep(0.8)
+                    time.sleep(0.2)
                     return clean_latex_response(response.text)
             except Exception as e:
                 last_exception = e
                 err_str = str(e)
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    time.sleep(8 * (attempt + 1))
+                    if has_fallback and (m == "gemini-3.5-flash" or attempt >= 1):
+                        # Cai para o próximo modelo de fallback quando há cota esgotada/429
+                        break
+                    time.sleep(6 * (attempt + 1))
                     continue
                 elif "503" in err_str or "high demand" in err_str or "UNAVAILABLE" in err_str:
+                    if has_fallback and attempt >= 0:
+                        # Cai imediatamente para o próximo modelo de fallback quando há sobrecarga (503)
+                        break
                     time.sleep(4 * (attempt + 1))
+                    continue
+                elif "504" in err_str or "DEADLINE_EXCEEDED" in err_str or "timed out" in err_str.lower():
+                    if has_fallback:
+                        break
+                    time.sleep(3 * (attempt + 1))
                     continue
                 else:
                     # Modelo indisponível (404) ou erro permanente -> tenta próximo modelo

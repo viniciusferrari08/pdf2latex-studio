@@ -146,7 +146,7 @@ def convert_unnumbered_equations(tex: str, chapter_slug: str, page_num: int) -> 
         lbl = "" if r"\label{" in body else f"\n\\label{{{_next_label()}}}"
         return f"\\begin{{equation}}{lbl}\n{body}\n\\end{{equation}}"
 
-    tex = re.sub(r"\\\[([\s\S]*?)\\\]", _repl_brackets, tex)
+    tex = re.sub(r"(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]", _repl_brackets, tex)
     return tex
 
 
@@ -206,6 +206,13 @@ def sanitize_latex_body(tex: str) -> str:
 
     # Correções de ambientes ou comandos incompatíveis gerados por LLMs
     tex = tex.replace(r"\begin{noindent}", r"\noindent ").replace(r"\end{noindent}", "")
+    tex = tex.replace(r"\begin{boxed}", r"\begin{destaquebox}").replace(r"\end{boxed}", r"\end{destaquebox}")
+    tex = tex.replace(r"\begin{boxother}", r"\begin{destaquebox}").replace(r"\end{boxother}", r"\end{destaquebox}")
+    tex = tex.replace(r"\begin{note}", r"\begin{destaquebox}").replace(r"\end{note}", r"\end{destaquebox}")
+    tex = tex.replace(r"\end{rangle}", r"\rangle")
+    tex = tex.replace(r"\texthookrightarrow", r"$\hookrightarrow$")
+    # Corrige \pdv[2]{f}{x^2} e \dv[2]{f}{x^2} do pacote physics (evita Double superscript)
+    tex = re.sub(r"\\(p?dv)\[(\d+)\]\{([^}]*)\}\{([A-Za-z\\]+)\^\2\}", r"\\\1[\2]{\3}{\4}", tex)
     tex = re.sub(r"\brect\b(?=\s*\()", "rectangle", tex)
     tex = tex.replace(r"\item[\rightarrow]", r"\item[$\rightarrow$]")
     tex = re.sub(r"\\section\*\{", r"\\section{", tex)
@@ -222,12 +229,17 @@ def sanitize_latex_body(tex: str) -> str:
 
     tex = re.sub(r"node\s*\[([^\]]*)\]", _fix_tikz_node_opts, tex)
 
-    # Corrige chaves de espessura de linha inválidas comuns em comandos TikZ (\draw, \filldraw, \path)
+    # Corrige chaves de espessura e decoração inválidas comuns em comandos TikZ (\draw, \filldraw, \path)
     def _fix_tikz_draw_opts(m: re.Match) -> str:
         cmd = m.group(1)
         opts = m.group(2)
         opts = re.sub(r"(?<![a-zA-Z0-9_=])\bheavy\b(?![a-zA-Z0-9_=])", "very thick", opts)
         opts = re.sub(r"(?<![a-zA-Z0-9_=])\bbold\b(?![a-zA-Z0-9_=])", "thick", opts)
+        opts = re.sub(
+            r"(?<![a-zA-Z0-9_={])\b(?:snake\s+it|decorate\s+it|snake)\b(?![a-zA-Z0-9_=}])",
+            "decorate, decoration={snake, amplitude=1.5pt, segment length=5pt}",
+            opts,
+        )
         return f"\\{cmd}[{opts}]"
 
     tex = re.sub(r"\\(draw|filldraw|path|fill)\s*\[([^\]]*)\]", _fix_tikz_draw_opts, tex)

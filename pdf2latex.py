@@ -4,14 +4,15 @@ pdf2latex.py - Transcritor de Notas de Aula e Documentos Manuscritos/PDF para La
 Utiliza a API do Google Gemini com suporte a visão e compreensão de física/matemática.
 """
 
-import os
-import sys
 import argparse
-import subprocess
-import shutil
+import os
 import re
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from PIL import Image
 
 try:
@@ -23,33 +24,36 @@ except ImportError:
     sys.exit(1)
 
 
-SYSTEM_PROMPT = """Você é um especialista em transcrição acadêmica, física teórica e LaTeX.
+SYSTEM_PROMPT = r"""Você é um especialista em transcrição acadêmica, física teórica e LaTeX.
 Sua tarefa é transcrever fielmente esta imagem de notas de aula manuscritas/fotografadas para código LaTeX de altíssima qualidade.
 
 DIRETRIZES FUNDAMENTAIS:
 1. FORMATO DO CÓDIGO:
-   - Forneça APENAS o corpo em LaTeX correspondente ao conteúdo da página (não inclua \\documentclass nem \\begin{document}, pois este trecho será incluído em um documento mestre).
+   - Forneça APENAS o corpo em LaTeX correspondente ao conteúdo da página (não inclua \documentclass nem \begin{document}, pois este trecho será incluído em um documento mestre).
    - Não envolva a resposta em blocos markdown com ```latex ... ```. Envie código LaTeX puro.
 
 2. FÍSICA E NOTAÇÃO MATEMÁTICA:
    - Use o pacote 'physics' sempre que apropriado:
-     * Kets, bras e produtos internos: \\ket{\\psi}, \\bra{\\phi}, \\braket{\\phi}{\\psi}, \\mel{\\phi}{\\hat{A}}{\\psi}
-     * Comutadores: \\comm{\\hat{A}}{\\hat{B}}
-     * Derivadas e diferenciais: \\dd{x}, \\dv{f}{x}, \\pdv{\\psi}{t}
-     * Operadores: use chapéu (\\hat{H}, \\hat{p}, \\hat{x}) conforme as anotações originais.
+     * Kets, bras e produtos internos: \ket{\psi}, \bra{\phi}, \braket{\phi}{\psi}, \mel{\phi}{\hat{A}}{\psi}
+     * Comutadores: \comm{\hat{A}}{\hat{B}}
+     * Derivadas e diferenciais: \dd{x}, \dv{f}{x}, \pdv{\psi}{t}
+     * Operadores: use chapéu (\hat{H}, \hat{p}, \hat{x}) conforme as anotações originais.
    - Para equações em linha, use $...$.
-   - Para equações destacadas ou deduções, use os ambientes \\[ ... \\], equation, ou align* quando houver múltiplos passos alinhados com &.
-   - Se houver fórmulas destacadas em caixas no manuscrito, use \\boxed{...}.
+   - Para equações destacadas ou deduções, use os ambientes \[ ... \], equation, ou align* quando houver múltiplos passos alinhados com &.
+   - Se houver fórmulas destacadas em caixas no manuscrito, use \boxed{...}.
 
 3. TEXTO E ESTRUTURA:
    - Preserve todo o texto em português, corrigindo eventuais pequenos erros ortográficos ou lapsos da escrita manual se o sentido for evidente pelo contexto físico.
-   - Use títulos de seções/subseções apropriados (\\section*, \\subsection*, \\paragraph*) se a página introduzir um novo tópico.
+   - Use títulos de seções/subseções apropriados (\section*, \subsection*, \paragraph*) se a página introduzir um novo tópico.
    - Use listas (itemize, enumerate) quando o manuscrito listar tópicos, postulados ou propriedades.
 
 4. DIAGRAMAS, GRÁFICOS E DESENHOS:
-   - Se houver esquemas, gráficos (como potenciais, eixos de coordenadas, diagramas de energia):
-     * Crie uma representação correspondente em TikZ se for um gráfico simples de coordenadas ou níveis de energia.
-     * OU inclua um comentário descritivo: % [DIAGRAMA: descrição do gráfico/desenho presente nas anotações].
+   - O preâmbulo conta com 'tikz', 'pgfplots' (compat=1.18), 'tikz-feynman' (compat=1.1.0) e 'quantikz'.
+   - Para curvas e potenciais físicos $V(x)$: use pgfplots (\begin{axis} ... \end{axis}).
+   - Para espalhamento e partículas: use tikz-feynman (\diagram* { ... } compatível com pdflatex).
+   - Para portas e circuitos quânticos: use quantikz (\begin{quantikz} ... \end{quantikz}).
+   - Para geometrias e esquemas gerais: use tikz standard limpo.
+   - Caso seja impossível recriar em código: inclua um comentário descritivo: % [DIAGRAMA: descrição do gráfico/desenho presente nas anotações].
 """
 
 
@@ -140,13 +144,18 @@ def clean_latex_response(text: str) -> str:
     return text
 
 
-import time
+FALLBACK_MODELS = [
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
+]
 
-FALLBACK_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
 
 def transcribe_image(client: genai.Client, model: str, image_path: Path, max_retries: int = 5) -> str:
     """Envia a imagem para a API do Gemini e retorna o código LaTeX da página, com fallback e retry."""
-    img = Image.open(image_path)
+    with Image.open(image_path) as raw_img:
+        img = raw_img.copy()
     models_to_try = [model] + [m for m in FALLBACK_MODELS if m != model]
     
     last_exception = None
@@ -196,6 +205,10 @@ MASTER_HEADER = r"""\documentclass[12pt,a4paper]{article}
 \usepackage{cancel}
 \usepackage{bm}
 \usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage[compat=1.1.0]{tikz-feynman}
+\usepackage{quantikz}
 \usepackage{hyperref}
 \hypersetup{
     colorlinks=true,
@@ -296,7 +309,7 @@ def process_pdf(
         print(f"\n-> Compilando com pdflatex...")
         try:
             res = subprocess.run(
-                ["pdflatex", "-interaction=nonstopmode", master_file.name],
+                ["pdflatex", "-no-shell-escape", "-interaction=nonstopmode", master_file.name],
                 cwd=str(doc_dir),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -359,7 +372,7 @@ def main():
         sys.exit(1)
 
     api_key = get_api_key(args.api_key)
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=120000))
 
     input_path = Path(args.input)
     output_dir = Path(args.output)

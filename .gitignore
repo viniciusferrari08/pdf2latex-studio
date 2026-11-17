@@ -10,9 +10,11 @@ __pycache__/
 
 # Projetos, uploads e materiais locais específicos
 projects/
+notas_de_aula/
 transcricoes_latex/
 book_builder/
 *.pdf
+*.zip
 assemble_book.py
 build_full_course.py
 build_mq2_complete.py

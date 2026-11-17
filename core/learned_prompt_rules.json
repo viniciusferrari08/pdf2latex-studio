@@ -1,1 +1,16 @@
-[]
+[
+  "Nunca utilize \\middle em expressões matemáticas. Para delimitadores flexíveis ou barras de divisão grandes, utilize \\left. ... \\right/ ou \\Big/.",
+  "Evite espaçamentos manuais com colchetes (como \\[6pt]) dentro de ambientes alinhados complexos (\\begin{align}) com múltiplos pontos de alinhamento (&); prefira quebras de linha simples (\\\\).",
+  "Em ambientes matemáticos multilinhas (align, gather), cada \\left deve ter um \\right correspondente na mesma linha (use \\right. e \\left. quando o delimitador atravessar quebras de linha).",
+  "Sempre feche blocos matemáticos display não enumerados \\[ ... \\] com \\], nunca com \\end{equation}.",
+  "Nunca utilize \\begin{boxed} ou \\end{boxed}. Para destacar equações use \\boxed{...} dentro de modo matemático (ex: \\begin{equation} \\boxed{...} \\end{equation}); para blocos de texto use \\begin{destaquebox} ... \\end{destaquebox}.",
+  "Com o pacote 'physics', utilize \\dd{t} (ou \\dv{y}{x}) para diferenciais e nunca macros indefinidas como \\dl ou \\dr; para delimitadores flexíveis use \\left( ... \\right).",
+  "Em títulos (\\section, \\subsection, \\subsubsection), envolva subscritos (_) e sobrescritos (^) em $...$ e garanta que todas as chaves { } e pares \\begin{...}/\\end{...} estejam balanceados.",
+  "Evite símbolos, emojis ou macros não carregadas no preâmbulo (como \\smiley, \\sadly ou símbolos Unicode especiais); utilize comandos LaTeX padrão ou texto simples.",
+  "Nunca envolva figuras TikZ, pgfplots ou quantikz em \\begin{figure} ... \\end{figure}. Utilize sempre \\begin{center} ... \\captionof{figure}{...} \\end{center}, fechando obrigatoriamente com \\end{center}.",
+  "Nunca insira ambientes de bloco (equation, align, gather, center, table) dentro de nós TikZ (\\node{...}). Use apenas modo matemático inline ($...$) ou coloque a equação fora do ambiente tikzpicture.",
+  "Em TikZ, nunca utilize estilos de decoração inexistentes como 'snake it'; para linhas onduladas use explicitamente 'decorate, decoration={snake}'.",
+  "Em TikZ, nunca utilize \\\\ para empilhar nós; use múltiplos comandos \\node com 'below=Xpt' ou 'yshift=-Ypt', terminando cada \\node com ponto e vírgula (;).",
+  "Em translações de caminhos TikZ, envolva sempre as coordenadas entre chaves ([shift={(x,y)}]) ou use coordenadas relativas (+ ou ++).",
+  "Em caminhos fechados do TikZ (como \\draw), escreva exatamente 'cycle;' sem abreviações ou erros de digitação."
+]
