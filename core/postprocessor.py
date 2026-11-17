@@ -211,14 +211,33 @@ def sanitize_latex_body(tex: str) -> str:
     tex = re.sub(r"\\subsection\*\{", r"\\subsection{", tex)
     tex = re.sub(r"\\subsubsection\*\{", r"\\subsubsection{", tex)
 
-    # Corrige chaves inválidas comuns em nós TikZ (ex: 'bottom' -> 'below', 'top' -> 'above')
+    # Corrige chaves inválidas comuns em nós TikZ (ex: 'bottom' -> 'below', 'top' -> 'above', 'style=pos=' -> 'pos=')
     def _fix_tikz_node_opts(m: re.Match) -> str:
         opts = m.group(1)
+        opts = re.sub(r"\bstyle\s*=\s*pos\s*=", "pos=", opts)
         opts = re.sub(r"(?<![a-zA-Z0-9_=])\bbottom\b(?![a-zA-Z0-9_=])", "below", opts)
         opts = re.sub(r"(?<![a-zA-Z0-9_=])\btop\b(?![a-zA-Z0-9_=])", "above", opts)
         return f"node[{opts}]"
 
-    tex = re.sub(r"node\[([^\]]*)\]", _fix_tikz_node_opts, tex)
+    tex = re.sub(r"node\s*\[([^\]]*)\]", _fix_tikz_node_opts, tex)
+
+    # Corrige chaves de espessura de linha inválidas comuns em comandos TikZ (\draw, \filldraw, \path)
+    def _fix_tikz_draw_opts(m: re.Match) -> str:
+        cmd = m.group(1)
+        opts = m.group(2)
+        opts = re.sub(r"(?<![a-zA-Z0-9_=])\bheavy\b(?![a-zA-Z0-9_=])", "very thick", opts)
+        opts = re.sub(r"(?<![a-zA-Z0-9_=])\bbold\b(?![a-zA-Z0-9_=])", "thick", opts)
+        return f"\\{cmd}[{opts}]"
+
+    tex = re.sub(r"\\(draw|filldraw|path|fill)\s*\[([^\]]*)\]", _fix_tikz_draw_opts, tex)
+
+    # Corrige âncoras inválidas de nós TikZ (ex: (nome.left) -> (nome.west))
+    anchor_map = {"left": "west", "right": "east", "top": "north", "bottom": "south"}
+    tex = re.sub(
+        r"\(([A-Za-z0-9_-]+)\.(left|right|top|bottom)\)",
+        lambda m: f"({m.group(1)}.{anchor_map[m.group(2)]})",
+        tex,
+    )
 
     # Garante modo matemático ao usar \left\{ \begin{tabular} ... \end{tabular} \right. dentro de nós TikZ
     tex = re.sub(
@@ -226,6 +245,9 @@ def sanitize_latex_body(tex: str) -> str:
         r"{$\\left\\{\1\\right.$}",
         tex,
     )
+
+    # Substitui macro não-padrão de Griffiths (\gr) por \mathfrak{r}
+    tex = re.sub(r"\\gr(?![a-zA-Z])", r"\\mathfrak{r}", tex)
 
     # Remove resets manuais de contadores que quebram hiperlinks
     tex = re.sub(r"\\setcounter\{(?:equation|footnote|page)\}\{\d+\}", "", tex)
