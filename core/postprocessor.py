@@ -268,6 +268,28 @@ def process_page_tex(
     tex = resolve_crop_fallbacks(tex, page_png, images_dir, chapter_slug, page_num)
     if auto_number_equations:
         tex = convert_unnumbered_equations(tex, chapter_slug, page_num)
+    # Auto-linka referências literais a equações com \tag{...} (ex: (I.1) ou \textcolor{...}{(II.8)})
+    found_tags = set(re.findall(r"\\tag\{([A-Za-z0-9._-]+)\}", tex))
+    if found_tags:
+        def _add_tag_label(m: re.Match) -> str:
+            t = m.group(1)
+            safe_t = re.sub(r"[^A-Za-z0-9_]", "_", t)
+            return f"\\tag{{{t}}}\\label{{eq:{chapter_slug}_tag_{safe_t}}}"
+
+        tex = re.sub(r"\\tag\{([A-Za-z0-9._-]+)\}(?!\s*\\label\{)", _add_tag_label, tex)
+        sorted_tags = sorted(found_tags, key=len, reverse=True)
+        tag_alt = "|".join(re.escape(t) for t in sorted_tags)
+        tex = re.sub(
+            rf"\\textcolor\{{[^\}}]+\}}\{{\(({tag_alt})\)\}}",
+            lambda m: f"\\eqref{{eq:{chapter_slug}_tag_{re.sub(r'[^A-Za-z0-9_]', '_', m.group(1))}}}",
+            tex,
+        )
+        tex = re.sub(
+            rf"(?<!\\tag\{{)(?<!\\label\{{)\(({tag_alt})\)(?!\}})",
+            lambda m: f"\\eqref{{eq:{chapter_slug}_tag_{re.sub(r'[^A-Za-z0-9_]', '_', m.group(1))}}}",
+            tex,
+        )
+
     return tex
 
 

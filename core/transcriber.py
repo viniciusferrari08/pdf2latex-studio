@@ -36,7 +36,7 @@ DIRETRIZES FUNDAMENTAIS:
 3. ENUMERAÇÃO DE EQUAÇÕES E REFERÊNCIAS NO TEXTO (ESSENCIAL):
    - Enumere todas as equações importantes e passos-chave usando \begin{equation}\label{eq:pPAGE_NUM_NOME} ... \end{equation} ou \begin{align}\label{...} ... \end{align}.
    - Use labels únicos e descritivos prefixados pelo número da página ou contexto (ex: \label{eq:p03_schroedinger}).
-   - Sempre que uma equação for substituída, projetada, integrada ou comentada em seguida, INCLUA referências explícitas no texto narrativo para melhorar a compreensão, como:
+   - Sempre que uma equação for substituída, projetada, integrada ou comentada em seguida, INCLUA referências explícitas clicáveis usando SEMPRE \eqref{eq:...} (NUNCA escreva o número literal "(I.1)" no texto, use sempre Eq.~\eqref{eq:...} para gerar hiperlink), como:
      "Substituindo a Eq.~\eqref{eq:...} na Eq.~\eqref{eq:...}, obtemos..." ou "A partir da definição expressa na Eq.~\eqref{eq:...}...".
    - Para passagens meramente auxiliares que não precisam de número, use \nonumber ou \[ ... \].
 
