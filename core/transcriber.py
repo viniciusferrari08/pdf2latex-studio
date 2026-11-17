@@ -44,9 +44,8 @@ DIRETRIZES FUNDAMENTAIS:
      * Em opções de posicionamento de nós TikZ (\node[...]), use sempre 'above', 'below', 'left', 'right' (NUNCA use 'bottom' ou 'top') e use 'pos=0.5' diretamente (NUNCA 'style=pos=0.5'). Para âncoras de nós use apenas pontos cardeais (.north, .south, .east, .west), nunca .top/.bottom/.left/.right.
      * Para espessuras de linha em \draw[...], use apenas chaves válidas do TikZ ('thin', 'thick', 'very thick', 'ultra thick' — NUNCA use 'heavy' ou 'bold').
      * Todo símbolo ou delimitador matemático dentro de \node{...} (como \left\{ ... \right.) deve estar explicitamente envolvido em $ ... $.
-   - SOMENTE se houver uma imagem fotográfica, captura complexa ou gráfico raster impossível de reproduzir fielmente em TikZ, emita EXATAMENTE o marcador de fallback em uma linha isolada:
+   - SOMENTE se houver uma imagem fotográfica ou gráfico raster denso impossível de reproduzir em TikZ (NUNCA para diagramas geométricos, vetores, esferas ou eixos 3D — esses devem sempre ser feitos em TikZ), emita o marcador de fallback com bounding box estrito ao redor APENAS da figura (nunca 0.05 a 0.95 da página inteira):
      % [CROP_FALLBACK: xmin=0.10, ymin=0.20, xmax=0.90, ymax=0.65, caption="Descrição da figura original"]
-     estimando as coordenadas normalizadas [0.0 a 1.0] onde a figura aparece na página.
 """
 
 
